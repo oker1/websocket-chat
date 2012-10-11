@@ -1,0 +1,4 @@
+*/ebin/*
+.DS_Store
+erlang/deps
+*.dump
