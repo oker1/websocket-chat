@@ -5,6 +5,9 @@
 %% Application callbacks
 -export([start/2, stop/1]).
 
+
+-define(SERVER, ?MODULE).
+
 %% ===================================================================
 %% Application callbacks
 %% ===================================================================
@@ -19,6 +22,7 @@ start(_StartType, _StartArgs) ->
 		cowboy_tcp_transport, [{port, 1337}],
     	cowboy_http_protocol, [{dispatch, Dispatch}]
     ),
+    cset_server:start_link(),
     cset_sup:start_link().
 
 stop(_State) ->

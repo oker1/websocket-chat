@@ -23,23 +23,19 @@ terminate(_Req, _State) ->
 	ok.
 
 websocket_init(_Any, Req, []) ->
-	timer:send_interval(1000, "{}"),
+	%timer:send_interval(1000, "{}"),
+	cset_server:register(self()),
 	Req2 = cowboy_http_req:compact(Req),
 	{ok, Req2, undefined, hibernate}.
 
-websocket_handle({text, Msg}, Req, []) ->
-	{ok, Json} = json:encode({{type, "color"}, {data, "red"}}),
-	{reply, {text, << Json >>}, Req, [{color, "red"}, {name, Msg}], hibernate};
-websocket_handle({text, Msg}, Req, [State]) ->
-	{{color, Color}, {name, Username}} = State,
-
-	ChatMessage = {{time, erlang:timestamp() * 1000}, {text, Msg}, {author, Username}, {color, Color}},
-	{ok, Json} = json:encode(ChatMessage),
-
-	{reply, {text, << Json >>}, Req, State, hibernate};
+websocket_handle({text, Msg}, Req, State) ->
+	cset_server:chatMessage(Msg, self()),
+    {ok, Req, State};
 websocket_handle(_Any, Req, State) ->
 	{ok, Req, State}.
 
+websocket_info({chatMessage, Msg}, Req, State) ->
+    {reply, {text, Msg}, Req, State, hibernate};
 websocket_info(tick, Req, State) ->
 	{reply, {text, <<"Tick">>}, Req, State, hibernate};
 websocket_info(_Info, Req, State) ->
