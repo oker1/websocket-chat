@@ -11,7 +11,7 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, {clients}).
+-record(state, {clients, colorCounter}).
 
 %%%===================================================================
 %%% API
@@ -30,7 +30,7 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 init([]) ->
-    {ok, #state{clients=dict:new()}}.
+    {ok, #state{clients=dict:new(), colorCounter=0}}.
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -54,23 +54,17 @@ handle_cast({unregsiter, Pid}, #state{clients = ClientDict} = State) ->
     State2 = State#state{clients = dict:erase(Pid, ClientDict)},
     {noreply, State2};
 
-handle_cast({chatMessage, Msg, Pid}, #state{clients = ClientDict} = State) ->
+handle_cast({chatMessage, Msg, Pid}, #state{clients = ClientDict, colorCounter = ColorCounter} = State) ->
     {ok, ClientState} = dict:find(Pid, ClientDict),
 
-    NewClientState = handle_message(ClientState, Msg, Pid, ClientDict),
-
-    % TODO: store only if changed
-    NewClientDict = dict:store(Pid, NewClientState, ClientDict),
-
-    {noreply, #state{clients = NewClientDict}}.
-
-%handle_cast(_Msg, State) ->
-%    {noreply, State}.
-
-handle_message(ClientState, Msg, Pid, ClientDict) ->
     NewClientState = case ClientState of
-        {new}       -> {loggedInUser, {name, Msg}, {color, "red"}};
+        {new}       -> {loggedInUser, {name, Msg}, {color, pick_color(ColorCounter)}};
         OtherState  -> OtherState
+    end,
+
+    NewColorCounter = case ClientState of
+        {new} -> ColorCounter + 1;
+        _     -> ColorCounter
     end,
 
     case ClientState of
@@ -78,7 +72,18 @@ handle_message(ClientState, Msg, Pid, ClientDict) ->
         _     -> handle_chatmessage(NewClientState, Msg, ClientDict)
     end,
 
-    NewClientState.
+    % TODO: store only if changed
+    NewClientDict = dict:store(Pid, NewClientState, ClientDict),
+
+    {noreply, #state{clients = NewClientDict, colorCounter = NewColorCounter}}.
+
+pick_color(ColorCounter) ->
+    Colors = ["red", "green", "blue", "magenta", "purple", "plum", "orange"],
+
+    lists:nth(1 + ColorCounter rem length(Colors), Colors).
+
+%handle_cast(_Msg, State) ->
+%    {noreply, State}.
 
 handle_colormessage(ClientState, Pid) ->
     {loggedInUser, {name, Username}, {color, Color}} = ClientState,
