@@ -117,7 +117,7 @@ handle_chatmessage(ClientState, Msg, ClientDict) ->
 
 build_chatmessage(Color, Username, Message) ->
     {Mega, Secs, _} = os:timestamp(),
-    Timestamp = Mega * 1000000 + Secs,
+    Timestamp = (Mega * 1000000 + Secs) * 1000,
 
     {[{type, <<"message">>}, {data, {[{time, Timestamp}, {text, Message}, {author, Username}, {color, list_to_binary(Color)}]}}]}.
 
