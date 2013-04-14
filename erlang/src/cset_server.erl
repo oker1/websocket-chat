@@ -11,7 +11,7 @@
 
 -define(SERVER, ?MODULE).
 
--record(state, {clients, colorCounter}).
+-record(state, {clients, colorCounter, history}).
 
 %%%===================================================================
 %%% API
@@ -30,7 +30,7 @@ start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
 init([]) ->
-    {ok, #state{clients=dict:new(), colorCounter=0}}.
+    {ok, #state{clients=dict:new(), colorCounter=0, history=[]}}.
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -46,15 +46,19 @@ handle_call(_Request, _From, State) ->
 %%                                  {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_cast({register, Pid}, #state{clients = ClientDict} = State) ->
+handle_cast({register, Pid}, #state{clients = ClientDict, history = History} = State) ->
     State2 = State#state{clients = dict:store(Pid, {new}, ClientDict)},
+
+    {ok, Json} = json:encode(build_historymessage(lists:reverse(History))),
+    Pid ! {chatMessage, Json},
+
     {noreply, State2};
 
 handle_cast({unregsiter, Pid}, #state{clients = ClientDict} = State) ->
     State2 = State#state{clients = dict:erase(Pid, ClientDict)},
     {noreply, State2};
 
-handle_cast({chatMessage, Msg, Pid}, #state{clients = ClientDict, colorCounter = ColorCounter} = State) ->
+handle_cast({chatMessage, Msg, Pid}, #state{clients = ClientDict, colorCounter = ColorCounter, history = History} = State) ->
     {ok, ClientState} = dict:find(Pid, ClientDict),
 
     NewClientState = case ClientState of
@@ -67,15 +71,20 @@ handle_cast({chatMessage, Msg, Pid}, #state{clients = ClientDict, colorCounter =
         _     -> ColorCounter
     end,
 
-    case ClientState of
+    Message = case ClientState of
         {new} -> handle_colormessage(NewClientState, Pid);
         _     -> handle_chatmessage(NewClientState, Msg, ClientDict)
+    end,
+
+    NewHistory = case ClientState of
+        {new} -> History;
+        _     -> {[{type, _}, {data, MessageStructure}]} = Message, [ MessageStructure | History ]
     end,
 
     % TODO: store only if changed
     NewClientDict = dict:store(Pid, NewClientState, ClientDict),
 
-    {noreply, #state{clients = NewClientDict, colorCounter = NewColorCounter}}.
+    {noreply, #state{clients = NewClientDict, colorCounter = NewColorCounter, history = NewHistory}}.
 
 pick_color(ColorCounter) ->
     Colors = ["red", "green", "blue", "magenta", "purple", "plum", "orange"],
@@ -88,13 +97,16 @@ pick_color(ColorCounter) ->
 
 handle_colormessage(ClientState, Pid) ->
     {loggedInUser, {name, Username}, {color, Color}} = ClientState,
-    {ok, Json} = json:encode(encode_colormessage(Color)),
+    Message = build_colormessage(Color),
+    {ok, Json} = json:encode(Message),
 
-    Pid ! {chatMessage, Json}.
+    Pid ! {chatMessage, Json},
+
+    Message.
 
 handle_chatmessage(ClientState, Msg, ClientDict) ->
     {loggedInUser, {name, Username}, {color, Color}} = ClientState,
-    ChatMessage = encode_chatmessage(Color, Username, Msg),
+    ChatMessage = build_chatmessage(Color, Username, Msg),
 
     lists:foreach(fun ({Pid, {loggedInUser, {name, Name}, {color, Color}}}) ->
             {ok, Json} = json:encode(ChatMessage),
@@ -103,14 +115,17 @@ handle_chatmessage(ClientState, Msg, ClientDict) ->
 
     ChatMessage.
 
-encode_chatmessage(Color, Username, Message) ->
+build_chatmessage(Color, Username, Message) ->
     {Mega, Secs, _} = os:timestamp(),
     Timestamp = Mega * 1000000 + Secs,
 
     {[{type, <<"message">>}, {data, {[{time, Timestamp}, {text, Message}, {author, Username}, {color, list_to_binary(Color)}]}}]}.
 
-encode_colormessage(Color) ->
+build_colormessage(Color) ->
     {[{type, <<"color">>}, {data, list_to_binary(Color)}]}.
+
+build_historymessage(History) ->
+    {[{type, <<"history">>}, {data, History}]}.
 
 %%--------------------------------------------------------------------
 %% @private
