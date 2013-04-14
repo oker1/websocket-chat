@@ -83,35 +83,34 @@ pick_color(ColorCounter) ->
     lists:nth(1 + ColorCounter rem length(Colors), Colors).
 
 %handle_cast(_Msg, State) ->
+    %TODO: Log unknown message
 %    {noreply, State}.
 
 handle_colormessage(ClientState, Pid) ->
     {loggedInUser, {name, Username}, {color, Color}} = ClientState,
-    Json = encode_colormessage(Color),
+    {ok, Json} = json:encode(encode_colormessage(Color)),
 
     Pid ! {chatMessage, Json}.
 
 handle_chatmessage(ClientState, Msg, ClientDict) ->
     {loggedInUser, {name, Username}, {color, Color}} = ClientState,
-    Json = encode_chatmessage(Color, Username, Msg),
+    ChatMessage = encode_chatmessage(Color, Username, Msg),
 
     lists:foreach(fun ({Pid, {loggedInUser, {name, Name}, {color, Color}}}) ->
-              Pid ! {chatMessage, Json}
-          end, dict:to_list(ClientDict)).
+            {ok, Json} = json:encode(ChatMessage),
+            Pid ! {chatMessage, Json}
+          end, dict:to_list(ClientDict)),
+
+    ChatMessage.
 
 encode_chatmessage(Color, Username, Message) ->
     {Mega, Secs, _} = os:timestamp(),
     Timestamp = Mega * 1000000 + Secs,
-    ChatMessage = {[{type, <<"message">>}, {data, {[{time, Timestamp}, {text, Message}, {author, Username}, {color, list_to_binary(Color)}]}}]},
-    {ok, Json} = json:encode(ChatMessage),
 
-    Json.
+    {[{type, <<"message">>}, {data, {[{time, Timestamp}, {text, Message}, {author, Username}, {color, list_to_binary(Color)}]}}]}.
 
 encode_colormessage(Color) ->
-    ColorMessage  = {[{type, <<"color">>}, {data, list_to_binary(Color)}]},
-    {ok, Json} = json:encode(ColorMessage),
-
-    Json.
+    {[{type, <<"color">>}, {data, list_to_binary(Color)}]}.
 
 %%--------------------------------------------------------------------
 %% @private
