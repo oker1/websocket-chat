@@ -47,9 +47,9 @@ handle_call(_Request, _From, State) ->
 %% @end
 %%--------------------------------------------------------------------
 handle_cast({register, Pid}, #state{clients = ClientDict, history = History} = State) ->
-    State2 = State#state{clients = dict:store(Pid, {new}, ClientDict)},
+    State2 = State#state{clients = dict:store(Pid, {connectingUser}, ClientDict)},
 
-    {ok, Json} = json:encode(build_historymessage(lists:reverse(History))),
+    {ok, Json} = json:encode(build_historyreply(lists:reverse(History))),
     Pid ! {chatMessage, Json},
 
     {noreply, State2};
@@ -58,31 +58,13 @@ handle_cast({unregsiter, Pid}, #state{clients = ClientDict} = State) ->
     State2 = State#state{clients = dict:erase(Pid, ClientDict)},
     {noreply, State2};
 
-handle_cast({chatMessage, Msg, Pid}, #state{clients = ClientDict, colorCounter = ColorCounter, history = History} = State) ->
+handle_cast({chatMessage, RawMessage, Pid}, #state{clients = ClientDict, colorCounter = ColorCounter, history = History}) ->
     {ok, ClientState} = dict:find(Pid, ClientDict),
 
-    NewClientState = case ClientState of
-        {new}       -> {loggedInUser, {name, Msg}, {color, pick_color(ColorCounter)}};
-        OtherState  -> OtherState
+    {NewColorCounter, NewHistory, NewClientDict} = case ClientState of
+        {connectingUser} -> handle_color(RawMessage, ColorCounter, History, Pid, ClientDict);
+        OtherState       -> handle_chat(OtherState, ColorCounter, RawMessage, ClientDict, History)
     end,
-
-    NewColorCounter = case ClientState of
-        {new} -> ColorCounter + 1;
-        _     -> ColorCounter
-    end,
-
-    Message = case ClientState of
-        {new} -> handle_colormessage(NewClientState, Pid);
-        _     -> handle_chatmessage(NewClientState, Msg, ClientDict)
-    end,
-
-    NewHistory = case ClientState of
-        {new} -> History;
-        _     -> {[{type, _}, {data, MessageStructure}]} = Message, [ MessageStructure | History ]
-    end,
-
-    % TODO: store only if changed
-    NewClientDict = dict:store(Pid, NewClientState, ClientDict),
 
     {noreply, #state{clients = NewClientDict, colorCounter = NewColorCounter, history = NewHistory}}.
 
@@ -91,40 +73,52 @@ pick_color(ColorCounter) ->
 
     lists:nth(1 + ColorCounter rem length(Colors), Colors).
 
-%handle_cast(_Msg, State) ->
-    %TODO: Log unknown message
-%    {noreply, State}.
+handle_color(Username, ColorCounter, History, Pid, ClientDict) ->
+    NewClientState = {connectedUser, {name, Username}, {color, pick_color(ColorCounter)}},
+    NewColorCounter = ColorCounter + 1,
+    NewClientDict = dict:store(Pid, NewClientState, ClientDict),
+
+    handle_colormessage(NewClientState, Pid),
+
+    {NewColorCounter, History, NewClientDict}.
+
+handle_chat(ClientState, ColorCounter, ChatMessage, ClientDict, History) ->
+    MessageReply = handle_chatmessage(ClientState, ChatMessage, ClientDict),
+
+    {[{type, _}, {data, MessageStructure}]} = MessageReply,
+
+    NewHistory = [ MessageStructure | History ],
+
+    {ColorCounter, NewHistory, ClientDict}.
 
 handle_colormessage(ClientState, Pid) ->
-    {loggedInUser, {name, Username}, {color, Color}} = ClientState,
-    Message = build_colormessage(Color),
-    {ok, Json} = json:encode(Message),
+    {connectedUser, {name, _}, {color, Color}} = ClientState,
+    ColorReply = build_colorreply(Color),
+    {ok, Json} = json:encode(ColorReply),
 
-    Pid ! {chatMessage, Json},
+    Pid ! {chatMessage, Json}.
 
-    Message.
+handle_chatmessage(ClientState, ChatMessage, ClientDict) ->
+    {connectedUser, {name, Username}, {color, Color}} = ClientState,
+    ChatMessageReply = build_chatreply(Color, Username, ChatMessage),
 
-handle_chatmessage(ClientState, Msg, ClientDict) ->
-    {loggedInUser, {name, Username}, {color, Color}} = ClientState,
-    ChatMessage = build_chatmessage(Color, Username, Msg),
+    lists:foreach(fun ({Pid, _}) ->
+        {ok, Json} = json:encode(ChatMessageReply),
+        Pid ! {chatMessage, Json}
+    end, dict:to_list(ClientDict)),
 
-    lists:foreach(fun ({Pid, {loggedInUser, {name, Name}, {color, Color}}}) ->
-            {ok, Json} = json:encode(ChatMessage),
-            Pid ! {chatMessage, Json}
-          end, dict:to_list(ClientDict)),
+    ChatMessageReply.
 
-    ChatMessage.
-
-build_chatmessage(Color, Username, Message) ->
+build_chatreply(Color, Username, Message) ->
     {Mega, Secs, _} = os:timestamp(),
     Timestamp = (Mega * 1000000 + Secs) * 1000,
 
     {[{type, <<"message">>}, {data, {[{time, Timestamp}, {text, Message}, {author, Username}, {color, list_to_binary(Color)}]}}]}.
 
-build_colormessage(Color) ->
+build_colorreply(Color) ->
     {[{type, <<"color">>}, {data, list_to_binary(Color)}]}.
 
-build_historymessage(History) ->
+build_historyreply(History) ->
     {[{type, <<"history">>}, {data, History}]}.
 
 %%--------------------------------------------------------------------
