@@ -21,7 +21,13 @@ start(_StartType, _StartArgs) ->
 
   Port = case application:get_env(cset, port) of
     undefined   -> 1337;
-    {ok, V}     -> V
+    {ok, P}     -> P
+  end,
+
+  Nodes = case application:get_env(cset, nodes) of
+    undefined   -> [];
+    {ok, ''}    -> [];
+    {ok, N}     -> [N]
   end,
 
   {ok, _} = cowboy:start_listener(cset_websocket_listener, 100,
@@ -30,8 +36,7 @@ start(_StartType, _StartArgs) ->
   ),
 
   lager:start(),
-  cset_server:start_link(),
-  cset_sup:start_link().
+  cset_server:start_link({nodes, Nodes}).
 
 stop(_State) ->
     ok.

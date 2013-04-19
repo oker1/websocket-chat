@@ -6,12 +6,12 @@
 -export([register/1, unregister/1, chatMessage/2, chatMessageFromNode/1]).
 
 %% gen_server callbacks
--export([start_link/0, init/1, handle_call/3, handle_cast/2, handle_info/2,
+-export([start_link/1, init/1, handle_call/3, handle_cast/2, handle_info/2,
 	 terminate/2, code_change/3]).
 
 -define(SERVER, ?MODULE).
 
--record(state, {clients, colorCounter, history}).
+-record(state, {clients, colorCounter, history, nodes}).
 
 -compile([{parse_transform, lager_transform}]).
 
@@ -29,13 +29,19 @@ chatMessage(Msg, Pid) ->
     gen_server:cast(?SERVER, {chatMessage, Msg, Pid}).
 
 chatMessageFromNode(Msg) ->
+    lager:info("Got message from other node"),
     gen_server:cast(?SERVER, {chatMessageFromNode, Msg}).
 
-start_link() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+start_link(InitParams) ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, InitParams, []).
 
-init([]) ->
-    {ok, #state{clients=dict:new(), colorCounter=0, history=[]}}.
+init({nodes, Nodes}) ->
+    lists:foreach(fun (Node) ->
+        lager:info("Connecting to node: ~p", [Node]),
+        net_kernel:connect_node(Node)
+    end, Nodes),
+
+    {ok, #state{clients=dict:new(), colorCounter=0, history=[], nodes=Nodes}}.
 
 handle_call(_Request, _From, State) ->
     Reply = ok,
@@ -63,20 +69,25 @@ handle_cast({unregsiter, Pid}, #state{clients = ClientDict} = State) ->
     State2 = State#state{clients = dict:erase(Pid, ClientDict)},
     {noreply, State2};
 
-handle_cast({chatMessage, RawMessage, Pid}, #state{clients = ClientDict, colorCounter = ColorCounter, history = History}) ->
+handle_cast({chatMessage, RawMessage, Pid}, #state{clients = ClientDict, colorCounter = ColorCounter, history = History, nodes = Nodes}) ->
     {ok, ClientState} = dict:find(Pid, ClientDict),
 
     {NewColorCounter, NewHistory, NewClientDict} = case ClientState of
         {connectingUser} -> handle_color(RawMessage, ColorCounter, History, Pid, ClientDict);
-        OtherState       -> handle_chat(OtherState, ColorCounter, RawMessage, ClientDict, History)
+        OtherState       -> handle_chat(OtherState, ColorCounter, RawMessage, ClientDict, History, Nodes)
     end,
 
-    {noreply, #state{clients = NewClientDict, colorCounter = NewColorCounter, history = NewHistory}};
+    {noreply, #state{clients = NewClientDict, colorCounter = NewColorCounter, history = NewHistory, nodes = Nodes}};
 
-handle_cast({chatMessageFromNode, RawMessage}, #state{clients = ClientDict, colorCounter = ColorCounter, history = History} = State) ->
+handle_cast({chatMessageFromNode, RawMessage}, #state{clients = ClientDict, colorCounter = ColorCounter, history = History, nodes = Nodes} = State) ->
+    lager:info("Got message from other node"),
+
+    HistoryMessage = extract_history(RawMessage),
+    NewHistory = append_history(HistoryMessage, History),
+
     broadcast_chatmessage(RawMessage, ClientDict),
 
-    {noreply, State}.
+    {noreply, #state{clients = ClientDict, colorCounter = ColorCounter, history = NewHistory, nodes = Nodes}}.
 
 pick_color(ColorCounter) ->
     Colors = ["red", "green", "blue", "magenta", "purple", "plum", "orange"],
@@ -92,14 +103,22 @@ handle_color(Username, ColorCounter, History, Pid, ClientDict) ->
 
     {NewColorCounter, History, NewClientDict}.
 
-handle_chat(ClientState, ColorCounter, ChatMessage, ClientDict, History) ->
-    MessageReply = handle_chatmessage(ClientState, ChatMessage, ClientDict),
+handle_chat(ClientState, ColorCounter, ChatMessage, ClientDict, History, Nodes) ->
+    MessageReply = handle_chatmessage(ClientState, ChatMessage, ClientDict, Nodes),
 
-    {[{type, _}, {data, MessageStructure}]} = MessageReply,
+    MessageStructure = extract_history(MessageReply),
 
-    NewHistory = [ MessageStructure | History ],
+    NewHistory = append_history(MessageStructure, History),
 
     {ColorCounter, NewHistory, ClientDict}.
+
+append_history(MessageStructure, History) ->
+    [ MessageStructure | History ].
+
+extract_history(MessageReply) ->
+    {[{type, _}, {data, MessageStructure}]} = MessageReply,
+
+    MessageStructure.
 
 handle_colormessage(ClientState, Pid) ->
     {connectedUser, {name, _}, {color, Color}} = ClientState,
@@ -108,9 +127,14 @@ handle_colormessage(ClientState, Pid) ->
 
     Pid ! {chatMessage, Json}.
 
-handle_chatmessage(ClientState, ChatMessage, ClientDict) ->
+handle_chatmessage(ClientState, ChatMessage, ClientDict, Nodes) ->
     {connectedUser, {name, Username}, {color, Color}} = ClientState,
     ChatMessageReply = build_chatreply(Color, Username, ChatMessage),
+
+    lists:foreach(fun (Node) ->
+        lager:info("Sending message to node: ~p", [Node]),
+        rpc:call(Node, cset_server, chatMessageFromNode, [ChatMessageReply])
+    end, Nodes),
 
     broadcast_chatmessage(ChatMessageReply, ClientDict),
 
