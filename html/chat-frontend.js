@@ -24,10 +24,14 @@ $(function () {
     }
 
     // open connection
-    var connection = new WebSocket('ws://127.0.0.1:1337');
+    var port = Math.floor(Math.random() * 2) + 1337;
+    var server = 'ws://127.0.0.1:' + port;
+
+    var connection = new WebSocket(server);
 
     connection.onopen = function () {
         // first we want users to enter their names
+        $('#server').text(server);
         input.removeAttr('disabled');
         status.text('Choose name:');
     };

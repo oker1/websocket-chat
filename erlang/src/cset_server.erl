@@ -3,7 +3,7 @@
 -behaviour(gen_server).
 
 %% API
--export([register/1, unregister/1, chatMessage/2]).
+-export([register/1, unregister/1, chatMessage/2, chatMessageFromNode/1]).
 
 %% gen_server callbacks
 -export([start_link/0, init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -12,6 +12,8 @@
 -define(SERVER, ?MODULE).
 
 -record(state, {clients, colorCounter, history}).
+
+-compile([{parse_transform, lager_transform}]).
 
 %%%===================================================================
 %%% API
@@ -25,6 +27,9 @@ unregister(Pid) ->
 
 chatMessage(Msg, Pid) ->
     gen_server:cast(?SERVER, {chatMessage, Msg, Pid}).
+
+chatMessageFromNode(Msg) ->
+    gen_server:cast(?SERVER, {chatMessageFromNode, Msg}).
 
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
@@ -66,7 +71,12 @@ handle_cast({chatMessage, RawMessage, Pid}, #state{clients = ClientDict, colorCo
         OtherState       -> handle_chat(OtherState, ColorCounter, RawMessage, ClientDict, History)
     end,
 
-    {noreply, #state{clients = NewClientDict, colorCounter = NewColorCounter, history = NewHistory}}.
+    {noreply, #state{clients = NewClientDict, colorCounter = NewColorCounter, history = NewHistory}};
+
+handle_cast({chatMessageFromNode, RawMessage}, #state{clients = ClientDict, colorCounter = ColorCounter, history = History} = State) ->
+    broadcast_chatmessage(RawMessage, ClientDict),
+
+    {noreply, State}.
 
 pick_color(ColorCounter) ->
     Colors = ["red", "green", "blue", "magenta", "purple", "plum", "orange"],
@@ -102,12 +112,15 @@ handle_chatmessage(ClientState, ChatMessage, ClientDict) ->
     {connectedUser, {name, Username}, {color, Color}} = ClientState,
     ChatMessageReply = build_chatreply(Color, Username, ChatMessage),
 
-    lists:foreach(fun ({Pid, _}) ->
-        {ok, Json} = json:encode(ChatMessageReply),
-        Pid ! {chatMessage, Json}
-    end, dict:to_list(ClientDict)),
+    broadcast_chatmessage(ChatMessageReply, ClientDict),
 
     ChatMessageReply.
+
+broadcast_chatmessage(ChatMessageReply, ClientDict) ->
+    {ok, Json} = json:encode(ChatMessageReply),
+    lists:foreach(fun ({Pid, _}) ->
+        Pid ! {chatMessage, Json}
+    end, dict:to_list(ClientDict)).
 
 build_chatreply(Color, Username, Message) ->
     {Mega, Secs, _} = os:timestamp(),

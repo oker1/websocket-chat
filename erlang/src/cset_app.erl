@@ -28,6 +28,8 @@ start(_StartType, _StartArgs) ->
     cowboy_tcp_transport, [{port, Port}],
     cowboy_http_protocol, [{dispatch, Dispatch}]
   ),
+
+  lager:start(),
   cset_server:start_link(),
   cset_sup:start_link().
 
