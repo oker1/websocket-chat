@@ -7,5 +7,5 @@
                   kernel,stdlib,crypto,cowboy
                  ]},
   {mod, { cset_app, []}},
-  {env, []}
+  {env, [{port, 1337}]}
  ]}.
