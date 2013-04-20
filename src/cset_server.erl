@@ -29,13 +29,13 @@ chatMessage(Msg, Pid) ->
     gen_server:cast(?SERVER, {chatMessage, Msg, Pid}).
 
 chatMessageFromNode(Msg) ->
-    lager:info("Got message from other node"),
     gen_server:cast(?SERVER, {chatMessageFromNode, Msg}).
 
 start_link(InitParams) ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, InitParams, []).
 
 init({connect, undefined}) ->
+    lager:info("Initializing state", []),
     {ok, initial_state()};
 
 init({connect, Node}) ->
@@ -51,25 +51,18 @@ handle_call(_Request, _From, State) ->
     Reply = ok,
     {reply, Reply, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Handling cast messages
-%%
-%% @spec handle_cast(Msg, State) -> {noreply, State} |
-%%                                  {noreply, State, Timeout} |
-%%                                  {stop, Reason, State}
-%% @end
-%%--------------------------------------------------------------------
 handle_cast({register, Pid}, #state{clients = ClientDict, history = History} = State) ->
+    lager:info("User connected, sending history.", []),
+
     State2 = State#state{clients = dict:store(Pid, {connectingUser}, ClientDict)},
 
-    {ok, Json} = json:encode(build_historyreply(lists:reverse(History))),
-    Pid ! {chatMessage, Json},
+    EncodedMessage = chat_protocol:encode(chat_protocol:history(lists:reverse(History))),
+    Pid ! {chatMessage, EncodedMessage},
 
     {noreply, State2};
 
 handle_cast({unregsiter, Pid}, #state{clients = ClientDict} = State) ->
+    lager:info("User disconnected.", []),
     State2 = State#state{clients = dict:erase(Pid, ClientDict)},
     {noreply, State2};
 
@@ -84,10 +77,10 @@ handle_cast({chatMessage, RawMessage, Pid}, #state{clients = ClientDict, colorCo
     {noreply, #state{clients = NewClientDict, colorCounter = NewColorCounter, history = NewHistory}};
 
 handle_cast({chatMessageFromNode, RawMessage}, #state{clients = ClientDict, colorCounter = ColorCounter, history = History}) ->
-    lager:info("Got message from other node"),
-
-    HistoryMessage = extract_history(RawMessage),
+    HistoryMessage = chat_protocol:extract_history(RawMessage),
     NewHistory = append_history(HistoryMessage, History),
+
+    lager:info("Got message from other node: ~p", [HistoryMessage]),
 
     broadcast_chatmessage(RawMessage, ClientDict),
 
@@ -99,18 +92,22 @@ pick_color(ColorCounter) ->
     lists:nth(1 + ColorCounter rem length(Colors), Colors).
 
 handle_color(Username, ColorCounter, History, Pid, ClientDict) ->
-    NewClientState = {connectedUser, {name, Username}, {color, pick_color(ColorCounter)}},
+    Color = pick_color(ColorCounter),
+    NewClientState = {connectedUser, {name, Username}, {color, Color}},
     NewColorCounter = ColorCounter + 1,
     NewClientDict = dict:store(Pid, NewClientState, ClientDict),
 
     handle_colormessage(NewClientState, Pid),
 
+    lager:info("Received username: ~p. Sent color: ~p", [Username, Color]),
+
     {NewColorCounter, History, NewClientDict}.
 
 handle_chat(ClientState, ColorCounter, ChatMessage, ClientDict, History) ->
+    lager:info("Received Message: ~p", [ChatMessage]),
     MessageReply = handle_chatmessage(ClientState, ChatMessage, ClientDict),
 
-    MessageStructure = extract_history(MessageReply),
+    MessageStructure = chat_protocol:extract_history(MessageReply),
 
     NewHistory = append_history(MessageStructure, History),
 
@@ -119,21 +116,17 @@ handle_chat(ClientState, ColorCounter, ChatMessage, ClientDict, History) ->
 append_history(MessageStructure, History) ->
     [ MessageStructure | History ].
 
-extract_history(MessageReply) ->
-    {[{type, _}, {data, MessageStructure}]} = MessageReply,
-
-    MessageStructure.
 
 handle_colormessage(ClientState, Pid) ->
     {connectedUser, {name, _}, {color, Color}} = ClientState,
-    ColorReply = build_colorreply(Color),
-    {ok, Json} = json:encode(ColorReply),
+    ColorReply = chat_protocol:color(Color),
+    EncodedMessage = chat_protocol:encode(ColorReply),
 
-    Pid ! {chatMessage, Json}.
+    Pid ! {chatMessage, EncodedMessage}.
 
 handle_chatmessage(ClientState, ChatMessage, ClientDict) ->
     {connectedUser, {name, Username}, {color, Color}} = ClientState,
-    ChatMessageReply = build_chatreply(Color, Username, ChatMessage),
+    ChatMessageReply = chat_protocol:message(Color, Username, ChatMessage),
 
     lists:foreach(fun (Node) ->
         lager:info("Sending message to node: ~p", [Node]),
@@ -145,34 +138,11 @@ handle_chatmessage(ClientState, ChatMessage, ClientDict) ->
     ChatMessageReply.
 
 broadcast_chatmessage(ChatMessageReply, ClientDict) ->
-    {ok, Json} = json:encode(ChatMessageReply),
+    EncodedMessage = chat_protocol:encode(ChatMessageReply),
     lists:foreach(fun ({Pid, _}) ->
-        Pid ! {chatMessage, Json}
+        Pid ! {chatMessage, EncodedMessage}
     end, dict:to_list(ClientDict)).
 
-build_chatreply(Color, Username, Message) ->
-    {Mega, Secs, _} = os:timestamp(),
-    Timestamp = (Mega * 1000000 + Secs) * 1000,
-
-    {[{type, <<"message">>}, {data, {[{time, Timestamp}, {text, Message}, {author, Username}, {color, list_to_binary(Color)}]}}]}.
-
-build_colorreply(Color) ->
-    {[{type, <<"color">>}, {data, list_to_binary(Color)}]}.
-
-build_historyreply(History) ->
-    {[{type, <<"history">>}, {data, History}]}.
-
-
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Handling all non call/cast messages
-%%
-%% @spec handle_info(Info, State) -> {noreply, State} |
-%%                                   {noreply, State, Timeout} |
-%%                                   {stop, Reason, State}
-%% @end
-%%--------------------------------------------------------------------
 handle_info({reconnectNode, Node}, State) ->
     lager:info("Reconnecting node: ~p", [Node]),
     erlang:monitor_node(Node, true),
@@ -187,27 +157,8 @@ handle_info(Info, State) ->
     lager:info("Unknown message: ~p", [Info]),
     {noreply, State}.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% This function is called by a gen_server when it is about to
-%% terminate. It should be the opposite of Module:init/1 and do any
-%% necessary cleaning up. When it returns, the gen_server terminates
-%% with Reason. The return value is ignored.
-%%
-%% @spec terminate(Reason, State) -> void()
-%% @end
-%%--------------------------------------------------------------------
 terminate(_Reason, _State) ->
     ok.
 
-%%--------------------------------------------------------------------
-%% @private
-%% @doc
-%% Convert process state when code is changed
-%%
-%% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
-%% @end
-%%--------------------------------------------------------------------
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
