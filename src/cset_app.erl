@@ -18,10 +18,10 @@ start(_StartType, _StartArgs) ->
     {ok, P}     -> P
   end,
 
-  Nodes = case application:get_env(cset, nodes) of
-    undefined   -> [];
-    {ok, ''}    -> [];
-    {ok, N}     -> [N]
+  Node = case application:get_env(cset, connect) of
+    {ok, ''}    -> undefined;
+    {ok, N}     -> N;
+    Any         -> Any
   end,
 
   Dispatch = [
@@ -35,7 +35,7 @@ start(_StartType, _StartArgs) ->
     [{env, [{dispatch, cowboy_router:compile(Dispatch)}]}]),
 
   lager:start(),
-  cset_server:start_link({nodes, Nodes}).
+  cset_server:start_link({connect, Node}).
 
 stop(_State) ->
     ok.
