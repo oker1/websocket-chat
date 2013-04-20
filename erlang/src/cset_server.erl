@@ -134,7 +134,7 @@ handle_chatmessage(ClientState, ChatMessage, ClientDict, Nodes) ->
     lists:foreach(fun (Node) ->
         lager:info("Sending message to node: ~p", [Node]),
         rpc:call(Node, cset_server, chatMessageFromNode, [ChatMessageReply])
-    end, Nodes),
+    end, nodes()),
 
     broadcast_chatmessage(ChatMessageReply, ClientDict),
 

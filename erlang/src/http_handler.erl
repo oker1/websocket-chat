@@ -1,5 +1,53 @@
+-module(http_handler).
+
+-behaviour(cowboy_http_handler).
+
+-export([init/3, handle/2, terminate/3]).
+
+init({_Any, http}, Req, State) ->
+  {ok, Req, State}.
+
+handle(Req, {port, Port} = State) ->
+  {ok, Req2} = cowboy_req:reply(
+    200, [{<<"Content-Type">>, <<"text/html">>}], html(Port), Req
+  ),
+  {ok, Req2, State}.
+
+terminate(_Reason, _Req, _State) ->
+  ok.
+
+html(Port) ->
+  BinPort = list_to_binary(integer_to_list(Port)),
+
+  [<<"<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset=\"utf-8\">
+        <title>WebSockets - Simple chat</title>
+
+        <style>
+        * { font-family:tahoma; font-size:12px; padding:0px; margin:0px; }
+        p { line-height:18px; }
+        div { width:500px; margin-left:auto; margin-right:auto;}
+        #content { padding:5px; background:#ddd; border-radius:5px;
+                   border:1px solid #CCC; margin-top:10px; }
+        #input { border-radius:2px; border:1px solid #ccc;
+                 margin-top:10px; padding:5px; width:400px;  }
+        #status { width:88px; display:block; float:left; margin-top:15px; }
+        </style>
+    </head>
+    <body>
+        <div id=\"server\"></div>
+        <div id=\"content\"></div>
+        <div>
+            <span id=\"status\">Connecting...</span>
+            <input type=\"text\" id=\"input\" disabled=\"disabled\" />
+        </div>
+
+        <script src=\"http://ajax.googleapis.com/ajax/libs/jquery/1.6.4/jquery.min.js\"></script>
+        <script type=\"text/javascript\">
 $(function () {
-    "use strict";
+    \"use strict\";
 
     // for better performance - to avoid searching in DOM
     var content = $('#content');
@@ -16,7 +64,7 @@ $(function () {
 
     // if browser doesn't support WebSocket, just show some notification and exit
     if (!window.WebSocket) {
-        content.html($('<p>', { text: 'Sorry, but your browser doesn\'t '
+        content.html($('<p>', { text: 'Sorry, but your browser doesn\\'t '
                                     + 'support WebSockets.'} ));
         input.hide();
         $('span').hide();
@@ -24,10 +72,10 @@ $(function () {
     }
 
     // open connection
-    var port = Math.floor(Math.random() * 2) + 1337;
+    var port = ">>, BinPort, <<";
     var server = 'ws://127.0.0.1:' + port + '/websocket';
-
     $('#server').text(server);
+
     var connection = new WebSocket(server);
 
     connection.onopen = function () {
@@ -38,7 +86,7 @@ $(function () {
 
     connection.onerror = function (error) {
         // just in there were some problems with conenction...
-        content.html($('<p>', { text: 'Sorry, but there\'s some problem with your '
+        content.html($('<p>', { text: 'Sorry, but there\\'s some problem with your '
                                     + 'connection or the server is down.</p>' } ));
     };
 
@@ -50,7 +98,7 @@ $(function () {
         try {
             var json = JSON.parse(message.data);
         } catch (e) {
-            console.log('This doesn\'t look like a valid JSON: ', message.data);
+            console.log('This doesn\\'t look like a valid JSON: ', message.data);
             return;
         }
 
@@ -72,7 +120,7 @@ $(function () {
             addMessage(json.data.author, json.data.text,
                        json.data.color, new Date(json.data.time));
         } else {
-            console.log('Hmm..., I\'ve never seen JSON like this: ', json);
+            console.log('Hmm..., I\\'ve never seen JSON like this: ', json);
         }
     };
 
@@ -116,9 +164,12 @@ $(function () {
      * Add message to the chat window
      */
     function addMessage(author, message, color, dt) {
-        content.append('<p><span style="color:' + color + '">' + author + '</span> @ ' +
+        content.append('<p><span style=\"color:' + color + '\">' + author + '</span> @ ' +
              + (dt.getHours() < 10 ? '0' + dt.getHours() : dt.getHours()) + ':'
              + (dt.getMinutes() < 10 ? '0' + dt.getMinutes() : dt.getMinutes())
              + ': ' + message + '</p>');
     }
 });
+        </script>
+    </body>
+</html>">>].
