@@ -12,3 +12,9 @@ erl -pa ebin -pa deps/*/ebin -boot start_sasl -s cset -sname cset2 -cset port 13
 
 open http://localhost:1337
 open http://localhost:1338
+
+
+TODOS:
+use supervisors
+cleanup server module
+sync history when node comes back
