@@ -40,7 +40,7 @@ init({connect, undefined}) ->
 
 init({connect, Node}) ->
     lager:info("Connecting to node: ~p", [Node]),
-    net_kernel:connect_node(Node),
+    erlang:monitor_node(Node, true),
 
     {ok, initial_state()}.
 
@@ -162,6 +162,7 @@ build_colorreply(Color) ->
 build_historyreply(History) ->
     {[{type, <<"history">>}, {data, History}]}.
 
+
 %%--------------------------------------------------------------------
 %% @private
 %% @doc
@@ -172,7 +173,18 @@ build_historyreply(History) ->
 %%                                   {stop, Reason, State}
 %% @end
 %%--------------------------------------------------------------------
-handle_info(_Info, State) ->
+handle_info({reconnectNode, Node}, State) ->
+    lager:info("Reconnecting node: ~p", [Node]),
+    erlang:monitor_node(Node, true),
+    {noreply, State};
+
+handle_info({nodedown, Node}, State) ->
+    lager:info("Node down: ~p", [Node]),
+    timer:send_after(1000, self(), {reconnectNode, Node}),
+    {noreply, State};
+
+handle_info(Info, State) ->
+    lager:info("Unknown message: ~p", [Info]),
     {noreply, State}.
 
 %%--------------------------------------------------------------------
