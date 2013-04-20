@@ -3,11 +3,12 @@
 -behaviour(gen_server).
 
 %% API
--export([register/1, unregister/1, chatMessage/2, chatMessageFromNode/1]).
+-export([register/1, unregister/1, chatMessage/2, chatMessageFromNode/1, syncHistoryRequest/1,
+    syncHistoryResponse/1]).
 
 %% gen_server callbacks
 -export([start_link/1, init/1, handle_call/3, handle_cast/2, handle_info/2,
-	 terminate/2, code_change/3]).
+    terminate/2, code_change/3]).
 
 -define(SERVER, ?MODULE).
 
@@ -31,6 +32,12 @@ chatMessage(Msg, Pid) ->
 chatMessageFromNode(Msg) ->
     gen_server:cast(?SERVER, {chatMessageFromNode, Msg}).
 
+syncHistoryRequest(Node) ->
+    gen_server:cast(?SERVER, {syncHistoryRequest, Node}).
+
+syncHistoryResponse(History) ->
+    gen_server:cast(?SERVER, {syncHistoryResponse, History}).
+
 start_link(InitParams) ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, InitParams, []).
 
@@ -41,6 +48,9 @@ init({connect, undefined}) ->
 init({connect, Node}) ->
     lager:info("Connecting to node: ~p", [Node]),
     erlang:monitor_node(Node, true),
+
+    lager:info("Requesting history from node: ~p", [Node]),
+    rpc:call(Node, cset_server, syncHistoryRequest, [node()]),
 
     {ok, initial_state()}.
 
@@ -84,7 +94,19 @@ handle_cast({chatMessageFromNode, RawMessage}, #state{clients = ClientDict, colo
 
     broadcast_chatmessage(RawMessage, ClientDict),
 
-    {noreply, #state{clients = ClientDict, colorCounter = ColorCounter, history = NewHistory}}.
+    {noreply, #state{clients = ClientDict, colorCounter = ColorCounter, history = NewHistory}};
+
+handle_cast({syncHistoryRequest, Node}, #state{clients = ClientDict, colorCounter = ColorCounter, history = History} = State) ->
+    lager:info("Sending history to node: ~p ~p", [Node, History]),
+    rpc:call(Node, cset_server, syncHistoryResponse, [History]),
+    {noreply, State};
+
+handle_cast({syncHistoryResponse, NewHistory}, #state{clients = ClientDict, colorCounter = ColorCounter, history = PreviousHistory}) ->
+    lager:info("Received history: ~p", [NewHistory]),
+    {noreply, #state{clients = ClientDict, colorCounter = ColorCounter, history = NewHistory}};
+
+handle_cast(Message, _State) ->
+    lager:info("Received unkown cast message: ~p", [Message]).
 
 pick_color(ColorCounter) ->
     Colors = ["red", "green", "blue", "magenta", "purple", "plum", "orange"],

@@ -18,3 +18,4 @@ TODOS:
 use supervisors
 cleanup server module
 sync history when node comes back
+global color cycling
