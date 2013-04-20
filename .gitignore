@@ -1,6 +1,6 @@
-*/ebin/*
+ebin/*
 .DS_Store
-erlang/deps
+deps
 *.dump
-erlang/log
+log
 
