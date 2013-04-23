@@ -10,19 +10,19 @@ init({tcp, http}, _Req, _Opts) ->
 
 websocket_init(_Any, Req, _Opts) ->
   cset_server:register(self()),
-  %Req2 = cowboy_http_req:compact(Req),
-  {ok, Req, undefined_state, hibernate}.
+  Req2 = cowboy_req:compact(Req),
+  {ok, Req2, undefined_state, hibernate}.
 
 websocket_handle({text, Msg}, Req, State) ->
-  cset_server:chatMessage(Msg, self()),
-    {ok, Req, State};
+  cset_server:incomingMessageFromClient(Msg, self()),
+  {ok, Req, State};
+
 websocket_handle(_Any, Req, State) ->
   {ok, Req, State}.
 
-websocket_info({chatMessage, Msg}, Req, State) ->
-    {reply, {text, Msg}, Req, State, hibernate};
-websocket_info(tick, Req, State) ->
-  {reply, {text, <<"Tick">>}, Req, State, hibernate};
+websocket_info({outgoingMessage, Msg}, Req, State) ->
+  {reply, {text, Msg}, Req, State, hibernate};
+
 websocket_info(_Info, Req, State) ->
   {ok, Req, State, hibernate}.
 
