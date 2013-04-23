@@ -73,15 +73,15 @@ handle_cast({unregister, Pid}, State) ->
     State2 = chat_state:remove_user(State, Pid),
     {noreply, State2};
 
-handle_cast({incomingMessageFromClient, RawMessage, Pid}, #state{clients = ClientDict, colorCounter = ColorCounter, history = History}) ->
+handle_cast({incomingMessageFromClient, RawMessage, Pid}, #state{clients = ClientDict, colorCounter = ColorCounter, history = History} = State) ->
     {ok, ClientState} = dict:find(Pid, ClientDict),
 
-    {NewColorCounter, NewHistory, NewClientDict} = case ClientState of
-        {connectingUser} -> handle_color(RawMessage, ColorCounter, History, Pid, ClientDict);
+    NewState = case ClientState of
+        {connectingUser} -> handle_color(RawMessage, Pid, State);
         OtherState       -> handle_chat(OtherState, ColorCounter, RawMessage, ClientDict, History)
     end,
 
-    {noreply, #state{clients = NewClientDict, colorCounter = NewColorCounter, history = NewHistory}};
+    {noreply, NewState};
 
 handle_cast({incomingMessageFromNode, RawMessage}, #state{clients = ClientDict, colorCounter = ColorCounter, history = History}) ->
     HistoryMessage = chat_protocol:extract_history(RawMessage),
@@ -96,22 +96,17 @@ handle_cast({incomingMessageFromNode, RawMessage}, #state{clients = ClientDict, 
 handle_cast(Message, _State) ->
     lager:info("Received unkown cast message: ~p", [Message]).
 
-pick_color(ColorCounter) ->
-    Colors = ["red", "green", "blue", "magenta", "purple", "plum", "orange"],
+handle_color(Username, Pid, State) ->
+    State2 = chat_state:assign_color_to_user(State, Pid, Username),
+    Color = chat_state:user_color(State2, Pid),
 
-    lists:nth(1 + ColorCounter rem length(Colors), Colors).
+    EncodedMessage = chat_protocol:encode(chat_protocol:color(Color)),
 
-handle_color(Username, ColorCounter, History, Pid, ClientDict) ->
-    Color = pick_color(ColorCounter),
-    NewClientState = {connectedUser, {name, Username}, {color, Color}},
-    NewColorCounter = ColorCounter + 1,
-    NewClientDict = dict:store(Pid, NewClientState, ClientDict),
-
-    handle_colormessage(NewClientState, Pid),
+    sendOutgoingMessage(Pid, EncodedMessage),
 
     lager:info("Received username: ~p. Sent color: ~p", [Username, Color]),
 
-    {NewColorCounter, History, NewClientDict}.
+    State2.
 
 handle_chat(ClientState, ColorCounter, ChatMessage, ClientDict, History) ->
     lager:info("Received Message: ~p", [ChatMessage]),
@@ -121,17 +116,10 @@ handle_chat(ClientState, ColorCounter, ChatMessage, ClientDict, History) ->
 
     NewHistory = append_history(MessageStructure, History),
 
-    {ColorCounter, NewHistory, ClientDict}.
+    #state{clients = ClientDict, colorCounter = ColorCounter, history = NewHistory}.
 
 append_history(MessageStructure, History) ->
     [ MessageStructure | History ].
-
-handle_colormessage(ClientState, Pid) ->
-    {connectedUser, {name, _}, {color, Color}} = ClientState,
-    ColorReply = chat_protocol:color(Color),
-    EncodedMessage = chat_protocol:encode(ColorReply),
-
-    sendOutgoingMessage(Pid, EncodedMessage).
 
 handle_chatmessage(ClientState, ChatMessage, ClientDict) ->
     {connectedUser, {name, Username}, {color, Color}} = ClientState,
