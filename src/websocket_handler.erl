@@ -27,4 +27,5 @@ websocket_info(_Info, Req, State) ->
   {ok, Req, State, hibernate}.
 
 websocket_terminate(_Reason, _Req, _State) ->
+  cset_server:unregister(self()),
   ok.
