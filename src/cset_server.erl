@@ -3,7 +3,8 @@
 -behaviour(gen_server).
 
 %% API
--export([register/1, unregister/1, incomingMessageFromClient/2, incomingMessageFromNode/1, syncHistoryRequestFromNode/1]).
+-export([register/1, unregister/1, incomingMessageFromClient/2, incomingMessageFromNode/1,
+    syncHistoryRequestFromNode/1, colorRequestFromNode/1]).
 
 %% gen_server callbacks
 -export([start_link/1, init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -32,27 +33,36 @@ incomingMessageFromNode(Msg) ->
 syncHistoryRequestFromNode(Node) ->
     gen_server:call(?SERVER, {syncHistoryRequestFromNode, Node}).
 
+colorRequestFromNode(Node) ->
+    gen_server:call(?SERVER, {colorRequestFromNode, Node}).
+
 start_link(InitParams) ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, InitParams, []).
 
 init({connect, undefined}) ->
-    lager:info("Initializing state"),
-    {ok, chat_state:initial()};
+    lager:info("Initializing master state."),
+    {ok, chat_state:initial(true)};
 
 init({connect, Node}) ->
-    lager:info("Connecting to node: ~p", [Node]),
+    lager:info("Initializing slave state."),
+    lager:info("Connecting to master node: ~p", [Node]),
     erlang:monitor_node(Node, true),
 
-    lager:info("Requesting history from node: ~p", [Node]),
+    lager:info("Requesting history from master: ~p", [Node]),
     History = rpc:call(Node, cset_server, syncHistoryRequestFromNode, [node()]),
     lager:info("Received history: ~p", [History]),
 
-    {ok, chat_state:set_history(chat_state:initial(), History)}.
+    {ok, chat_state:set_history(chat_state:initial(Node), History)}.
 
 handle_call({syncHistoryRequestFromNode, Node}, _From, State) ->
     History = chat_state:history(State),
     lager:info("Sending history to node: ~p ~p", [Node, History]),
     {reply, History, State};
+
+handle_call({colorRequestFromNode, Node}, _From, State) ->
+    {Color, NewState} = chat_state:reserve_color(State),
+    lager:info("Sending color to node: ~p ~p", [Node, Color]),
+    {reply, Color, NewState};
 
 handle_call(Request, From, State) ->
     lager:info("Received unkown call request: ~p from: ~p", [Request, From]),

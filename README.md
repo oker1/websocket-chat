@@ -15,7 +15,6 @@ open http://localhost:1338
 
 
 TODOS:
-use supervisors
-cleanup server module
-sync history when node comes back
-global color cycling
+* use supervisors
+* cleanup server module
+* sync history when node comes back
