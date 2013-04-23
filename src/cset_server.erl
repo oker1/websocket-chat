@@ -11,8 +11,6 @@
 
 -define(SERVER, ?MODULE).
 
--include("chat_state.hrl").
-
 -compile([{parse_transform, lager_transform}]).
 
 %%%===================================================================
@@ -71,27 +69,25 @@ handle_cast({register, Pid}, State) ->
 handle_cast({unregister, Pid}, State) ->
     lager:info("User disconnected.", []),
     State2 = chat_state:remove_user(State, Pid),
+
     {noreply, State2};
 
-handle_cast({incomingMessageFromClient, RawMessage, Pid}, #state{clients = ClientDict, colorCounter = ColorCounter, history = History} = State) ->
-    {ok, ClientState} = dict:find(Pid, ClientDict),
-
-    NewState = case ClientState of
-        {connectingUser} -> handle_color(RawMessage, Pid, State);
-        OtherState       -> handle_chat(OtherState, ColorCounter, RawMessage, ClientDict, History)
+handle_cast({incomingMessageFromClient, RawMessage, Pid}, State) ->
+    NewState = case chat_state:user_connected(State, Pid) of
+        false -> handle_color(RawMessage, Pid, State);
+        _    -> handle_chat(RawMessage, Pid, State)
     end,
 
     {noreply, NewState};
 
-handle_cast({incomingMessageFromNode, RawMessage}, #state{clients = ClientDict, colorCounter = ColorCounter, history = History}) ->
+handle_cast({incomingMessageFromNode, RawMessage}, State) ->
     HistoryMessage = chat_protocol:extract_history(RawMessage),
-    NewHistory = append_history(HistoryMessage, History),
 
     lager:info("Got message from other node: ~p", [HistoryMessage]),
 
-    broadcast_chatmessage(RawMessage, ClientDict),
+    broadcast_chatmessage(RawMessage, State),
 
-    {noreply, #state{clients = ClientDict, colorCounter = ColorCounter, history = NewHistory}};
+    {noreply, chat_state:append_history(State, HistoryMessage)};
 
 handle_cast(Message, _State) ->
     lager:info("Received unkown cast message: ~p", [Message]).
@@ -108,37 +104,28 @@ handle_color(Username, Pid, State) ->
 
     State2.
 
-handle_chat(ClientState, ColorCounter, ChatMessage, ClientDict, History) ->
+handle_chat(ChatMessage, Pid, State) ->
     lager:info("Received Message: ~p", [ChatMessage]),
-    MessageReply = handle_chatmessage(ClientState, ChatMessage, ClientDict),
 
-    MessageStructure = chat_protocol:extract_history(MessageReply),
-
-    NewHistory = append_history(MessageStructure, History),
-
-    #state{clients = ClientDict, colorCounter = ColorCounter, history = NewHistory}.
-
-append_history(MessageStructure, History) ->
-    [ MessageStructure | History ].
-
-handle_chatmessage(ClientState, ChatMessage, ClientDict) ->
-    {connectedUser, {name, Username}, {color, Color}} = ClientState,
-    ChatMessageReply = chat_protocol:message(Color, Username, ChatMessage),
+    {user, Username, Color} = chat_state:connected_user(State, Pid),
+    MessageReply = chat_protocol:message(Color, Username, ChatMessage),
 
     lists:foreach(fun (Node) ->
         lager:info("Sending message to node: ~p", [Node]),
-        rpc:call(Node, cset_server, incomingMessageFromNode, [ChatMessageReply])
+        rpc:call(Node, cset_server, incomingMessageFromNode, [MessageReply])
     end, nodes()),
 
-    broadcast_chatmessage(ChatMessageReply, ClientDict),
+    broadcast_chatmessage(MessageReply, State),
 
-    ChatMessageReply.
+    MessageStructure = chat_protocol:extract_history(MessageReply),
 
-broadcast_chatmessage(ChatMessageReply, ClientDict) ->
+    chat_state:append_history(State, MessageStructure).
+
+broadcast_chatmessage(ChatMessageReply, State) ->
     EncodedMessage = chat_protocol:encode(ChatMessageReply),
     lists:foreach(fun ({Pid, _}) ->
         sendOutgoingMessage(Pid, EncodedMessage)
-    end, dict:to_list(ClientDict)).
+    end, dict:to_list(chat_state:client_list(State))).
 
 sendOutgoingMessage(Pid, Message) ->
     Pid ! {outgoingMessage, Message}.
